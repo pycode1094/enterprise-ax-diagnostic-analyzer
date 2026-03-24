@@ -11,7 +11,9 @@
       "Bash(for pid:*)",
       "Bash(do taskkill:*)",
       "Bash(done)",
-      "WebFetch(domain:openrouter.ai)"
+      "WebFetch(domain:openrouter.ai)",
+      "Bash(git remote:*)",
+      "Bash(git push:*)"
     ]
   }
 }

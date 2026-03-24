@@ -47,17 +47,14 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-// --- OpenRouter API (direct client call) ---
+// --- OpenRouter API (via serverless proxy) ---
 
 const OPENROUTER_MODEL = 'openrouter/free';
 
-async function callOpenRouter(prompt: string, apiKey: string): Promise<string> {
-  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+async function callOpenRouter(prompt: string): Promise<string> {
+  const res = await fetch('/api/chat', {
     method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: OPENROUTER_MODEL,
       messages: [{ role: 'user', content: prompt }],
@@ -144,7 +141,6 @@ const LevelBadge = ({ level }: { level: AXLevel }) => {
 
 export default function App() {
   const [step, setStep] = useState<'input' | 'result'>('input');
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem('openrouter_api_key') || '');
   const [aiReport, setAiReport] = useState<AIReport | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
@@ -200,7 +196,6 @@ export default function App() {
   }, [formData, step]);
 
   const runDiagnostic = async () => {
-    localStorage.setItem('openrouter_api_key', apiKey);
     setStep('result');
     setAiLoading(true);
     setAiError(null);
@@ -243,7 +238,7 @@ Each field must contain specific, actionable consulting advice tailored to the c
 }`;
 
     try {
-      const response = await callOpenRouter(prompt, apiKey);
+      const response = await callOpenRouter(prompt);
       const jsonMatch = response.match(/\{[\s\S]*\}/);
       if (!jsonMatch) throw new Error('AI 응답에서 JSON을 찾을 수 없습니다.');
       const parsed: AIReport = JSON.parse(jsonMatch[0]);
@@ -1126,23 +1121,6 @@ Each field must contain specific, actionable consulting advice tailored to the c
               </div>
 
               <section className="glass-card p-6 md:p-8">
-                <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-5">API 설정</h2>
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-slate-600">OpenRouter API Key</label>
-                  <input
-                    type="password"
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    placeholder="sk-or-v1-..."
-                    className="input-field font-mono text-sm"
-                  />
-                  <p className="text-[11px] text-slate-400">
-                    <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-indigo-500 hover:underline">openrouter.ai/keys</a>에서 무료로 발급받으세요. 키는 브라우저에만 저장됩니다.
-                  </p>
-                </div>
-              </section>
-
-              <section className="glass-card p-6 md:p-8">
                 <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-5">기업 정보</h2>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="space-y-1.5">
@@ -1249,7 +1227,7 @@ Each field must contain specific, actionable consulting advice tailored to the c
 
                 <button
                   onClick={runDiagnostic}
-                  disabled={!apiKey || !formData.companyName || !formData.industry || aiLoading}
+                  disabled={!formData.companyName || !formData.industry || aiLoading}
                   className="w-full mt-8 py-3.5 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 disabled:from-slate-300 disabled:to-slate-300 text-white font-bold text-sm rounded-xl shadow-lg shadow-indigo-200/50 transition-all flex items-center justify-center gap-2 group"
                 >
                   {aiLoading ? (
