@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(./node_modules/.bin/tsc --noEmit 2>&1)",
+      "Bash(curl -s https://openrouter.ai/api/v1/models)",
+      "Bash(python3 -c \":*)",
+      "Bash(node -e \":*)",
+      "Bash(curl:*)",
+      "Bash(netstat -ano)",
+      "Bash(for pid:*)",
+      "Bash(do taskkill:*)",
+      "Bash(done)",
+      "WebFetch(domain:openrouter.ai)"
+    ]
+  }
+}

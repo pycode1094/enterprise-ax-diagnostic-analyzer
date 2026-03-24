@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AX Diagnostic Analyzer - Standalone</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React & ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Recharts -->
+    <script src="https://unpkg.com/recharts/umd/Recharts.js"></script>
+    <!-- docx -->
+    <script src="https://unpkg.com/docx@9.6.1/build/index.js"></script>
+    <!-- FileSaver -->
+    <script src="https://unpkg.com/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+    <!-- Framer Motion -->
+    <script src="https://unpkg.com/framer-motion@12.23.24/dist/framer-motion.js"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        .glass-card {
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 1.5rem;
+            box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.05);
+        }
+    </style>
+</head>
+<body class="bg-slate-50">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useMemo, useEffect } = React;
+        const { 
+            BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
+            Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Cell
+        } = Recharts;
+        const { motion, AnimatePresence } = Motion;
+        const { 
+            Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, 
+            Table, TableRow, TableCell, WidthType, BorderStyle 
+        } = docx;
+
+        // Icons mapping
+        const Icon = ({ name, size = 24, className = "" }) => {
+            const iconRef = React.useRef(null);
+            useEffect(() => {
+                if (iconRef.current) {
+                    lucide.createIcons({
+                        attrs: {
+                            stroke: "currentColor",
+                            "stroke-width": 2,
+                            "stroke-linecap": "round",
+                            "stroke-linejoin": "round",
+                            width: size,
+                            height: size
+                        },
+                        name: name,
+                        element: iconRef.current
+                    });
+                }
+            }, [name, size]);
+            return <i data-lucide={name} className={className}></i>;
+        };
+
+        // --- Types & Constants ---
+        const LEVEL_MAP = {
+            L1: { name: '인식 단계 (Awareness)', color: 'bg-slate-400', range: '1.0~1.9' },
+            L2: { name: '실험 단계 (Experimentation)', color: 'bg-blue-400', range: '2.0~2.9' },
+            L3: { name: '적용 단계 (Application)', color: 'bg-indigo-400', range: '3.0~3.9' },
+            L4: { name: '확산 단계 (Diffusion)', color: 'bg-violet-400', range: '4.0~4.4' },
+            L5: { name: '최적화 단계 (Optimization)', color: 'bg-emerald-500', range: '4.5~5.0' },
+        };
+
+        const getLevel = (score) => {
+            if (score >= 4.5) return 'L5';
+            if (score >= 4.0) return 'L4';
+            if (score >= 3.0) return 'L3';
+            if (score >= 2.0) return 'L2';
+            return 'L1';
+        };
+
+        const cn = (...classes) => classes.filter(Boolean).join(' ');
+
+        const LevelBadge = ({ level }) => {
+            const info = LEVEL_MAP[level];
+            return (
+                <span className={cn(
+                    "px-2 py-1 rounded-md text-xs font-bold text-white shadow-sm",
+                    info.color
+                )}>
+                    {level}
+                </span>
+            );
+        };
+
+        // --- Main App Component ---
+        function App() {
+            const [step, setStep] = useState('input');
+            const [viewMode, setViewMode] = useState('dashboard');
+            const [formData, setFormData] = useState({
+                companyName: '',
+                industry: '',
+                employeeCount: '',
+                execScore: 3,
+                deptScores: [
+                    { name: '생산', score: 3 },
+                    { name: '품질', score: 3 },
+                    { name: '영업', score: 3 },
+                    { name: '관리', score: 3 },
+                ],
+                individualScore: 3,
+            });
+
+            const handleDeptScoreChange = (index, value) => {
+                const newDeptScores = [...formData.deptScores];
+                newDeptScores[index].score = value;
+                setFormData({ ...formData, deptScores: newDeptScores });
+            };
+
+            const diagnosticResult = useMemo(() => {
+                if (step !== 'result') return null;
+
+                const deptAvg = formData.deptScores.reduce((acc, curr) => acc + curr.score, 0) / formData.deptScores.length;
+                const overallScore = Number(((formData.execScore + deptAvg + formData.individualScore) / 3).toFixed(2));
+                
+                const deptLevels = {};
+                formData.deptScores.forEach(dept => {
+                    deptLevels[dept.name] = getLevel(dept.score);
+                });
+
+                const overallLevel = getLevel(overallScore);
+
+                const radarData = [
+                    { name: '경영진 의지', score: formData.execScore, fullMark: 5 },
+                    ...formData.deptScores.map(d => ({ name: d.name, score: d.score, fullMark: 5 })),
+                    { name: '개인 역량', score: formData.individualScore, fullMark: 5 },
+                ];
+
+                return {
+                    companyName: formData.companyName,
+                    overallScore,
+                    overallLevel,
+                    overallLevelName: LEVEL_MAP[overallLevel].name,
+                    execLevel: getLevel(formData.execScore),
+                    deptLevels,
+                    individualLevel: getLevel(formData.individualScore),
+                    chartData: radarData,
+                };
+            }, [formData, step]);
+
+            const getConsultingText = (level, area) => {
+                const texts = {
+                    L1: {
+                        overall: "AI 도입 필요성에 대한 인식은 형성되었으나, 구체적인 전략이나 실행 계획이 부재한 초기 단계입니다. 조직 내 AI 리터러시 제고를 위한 기초 교육과 비전 수립이 시급합니다.",
+                        exec: "경영진의 AX 추진 의지가 초기 단계에 머물러 있어 전사적 동력 확보가 어려운 상태입니다. AI를 단순 기술이 아닌 경영 전략의 핵심으로 인식하고 명확한 로드맵을 제시해야 합니다.",
+                        dept: "부서별 AI 활용이 거의 전무하거나 산발적인 관심 수준에 그치고 있습니다. 부서별 특화된 AI 유즈케이스를 발굴하고 파일럿 프로젝트를 통한 체감 효과 창출이 필요합니다.",
+                        indiv: "구성원들의 AI 도구 활용 능력 및 데이터 이해도가 낮아 디지털 전환에 대한 막연한 불안감이 존재합니다. 전사적 AI 기초 교육 프로그램 도입을 통해 심리적 장벽을 해소해야 합니다."
+                    },
+                    L2: {
+                        overall: "AI 활용이 일부 시도되고 있으나 조직 차원의 실행 구조가 부족한 상태입니다. 성공 사례(Quick-Win) 발굴을 통해 전사적 공감대를 형성하고 표준 가이드라인을 수립해야 합니다.",
+                        exec: "AX에 대한 관심은 높으나 구체적인 자원 배분과 조직 개편이 미흡하여 실행력이 떨어지는 상태입니다. 전담 조직(COE) 구성과 예산 확보를 통해 추진력을 강화해야 합니다.",
+                        dept: "일부 부서에서 실험적인 AI 도입이 이루어지고 있으나 타 부서와의 협업이나 데이터 공유가 단절되어 있습니다. 부서 간 데이터 연계 체계를 마련하고 성공 사례를 공유하는 워크숍이 필요합니다.",
+                        indiv: "일부 얼리어답터를 중심으로 AI 활용이 시도되나 대다수 인원은 기존 업무 방식을 고수하고 있습니다. 실무 중심의 AI 활용 가이드를 배포하고 우수 활용 사례에 대한 보상 체계를 마련해야 합니다."
+                    },
+                    L3: {
+                        overall: "특정 업무에서 AI 활용이 시작되었으나 조직 확산을 위한 체계가 필요합니다. 부서 간 데이터 사일로를 해소하고 전사적 AX 거버넌스를 강화하여 통합된 시너지를 창출해야 합니다.",
+                        exec: "경영진이 AX의 중요성을 인지하고 적극 지원하고 있으나, 성과 측정 지표(KPI)와의 연계가 부족합니다. AI 도입 성과를 정량화하여 비즈니스 가치와 연결하는 성과 관리 체계 도입이 필요합니다.",
+                        dept: "핵심 부서를 중심으로 AI가 업무 프로세스에 적용되었으나 데이터 품질 관리 및 표준화가 미흡합니다. 전사적 데이터 거버넌스 수립을 통해 데이터 신뢰성을 확보하고 활용 범위를 넓혀야 합니다.",
+                        indiv: "실무에서 AI 도구를 활용하기 시작했으나 고도화된 분석이나 문제 해결 능력은 부족한 상태입니다. 직무별 심화 AI 역량 강화 교육을 통해 AI를 도구가 아닌 파트너로 활용하도록 유도해야 합니다."
+                    },
+                    L4: {
+                        overall: "조직 전반에 걸쳐 AI 활용이 확산되어 업무 효율성이 증대되고 있으나, 데이터 기반 의사결정 문화의 완전한 정착이 과제입니다. AI 모델 고도화와 함께 운영 안정성을 확보해야 합니다.",
+                        exec: "AX가 경영 전략의 핵심으로 자리 잡았으나 급변하는 AI 기술 트렌드에 대한 유연한 대응 체계가 보완되어야 합니다. 외부 파트너십 강화 및 오픈 이노베이션을 통해 기술 우위를 지속적으로 확보해야 합니다.",
+                        dept: "대부분의 부서에서 AI를 활용하여 성과를 창출하고 있으나 부서 간 최적화 수준의 편차가 존재합니다. 부서 간 베스트 프랙티스를 상향 평준화하고 전사적 최적화 관점의 AI 통합 운영이 필요합니다.",
+                        indiv: "구성원 대다수가 AI를 업무에 능숙하게 활용하고 있으나 AI 윤리 및 보안 의식은 추가 보완이 필요합니다. AI 거버넌스 내 보안 및 윤리 가이드라인을 강화하여 안정적인 AI 활용 문화를 정착시켜야 합니다."
+                    },
+                    L5: {
+                        overall: "AI가 기업의 핵심 경쟁력으로 내재화되어 실시간 최적화가 이루어지고 있는 선도적 단계입니다. 지속적인 기술 혁신과 함께 AI 생태계 리딩을 위한 전략적 투자가 지속되어야 합니다.",
+                        exec: "최고 수준의 AX 리더십을 보유하고 있으나 미래 불확실성에 대비한 AI 기반 시나리오 경영을 더욱 강화해야 합니다. 글로벌 수준의 AI 인재 확보 및 유지를 위한 차별화된 인재 경영 전략이 필요합니다.",
+                        dept: "전 부서가 AI 기반으로 유기적으로 연결되어 데이터 기반의 실시간 의사결정이 이루어지고 있습니다. AI 모델의 자가 학습 및 고도화 체계를 구축하여 기술적 초격차를 유지해야 합니다.",
+                        indiv: "모든 구성원이 AI 전문가 수준의 역량을 보유하고 창의적인 업무에 집중하고 있습니다. 구성원들이 AI와 함께 새로운 비즈니스 모델을 창출할 수 있도록 사내 벤처 및 혁신 문화를 장려해야 합니다."
+                    }
+                };
+                return texts[level][area];
+            };
+
+            const getExecutionStrategy = (level) => {
+                const strategies = {
+                    L1: {
+                        directions: ["전사적 AI 리터러시 제고 및 심리적 장벽 해소", "경영진 중심의 AX 비전 및 추진 로드맵 수립", "현업 중심의 작고 확실한 성공 사례(Quick-Win) 발굴"],
+                        steps: [
+                            { title: "기반 조성 및 교육", period: "1~3개월", content: "전 임직원 대상 AI 기초 교육 및 AX 비전 선포식 진행. 부서별 AX 챔피언 선발." },
+                            { title: "아이디어 발굴 및 PoC", period: "3~6개월", content: "부서별 업무 효율화 아이디어 공모전 실시. 1~2개 핵심 과제 대상 PoC(개념 증명) 수행." },
+                            { title: "초기 확산 및 평가", period: "6~12개월", content: "PoC 결과 공유회 및 성과 분석. 우수 부서 포상 및 차년도 확산 계획 수립." }
+                        ],
+                        courses: [
+                            { category: "기초", content: "생성형 AI의 이해와 업무 활용 기초 (ChatGPT, Claude 등)" },
+                            { category: "실무", content: "AI 프롬프트 엔지니어링 및 업무 자동화 입문" },
+                            { category: "고급", content: "AX 리더십 및 디지털 전환 전략 수립 과정" }
+                        ],
+                        pocs: [
+                            { area: "사무/관리", task: "회의록 자동 요약 및 이메일 초안 작성 자동화" },
+                            { area: "영업/마케팅", task: "시장 트렌드 분석 및 경쟁사 모니터링 자동화" }
+                        ]
+                    },
+                    L2: {
+                        directions: ["부서별 산발적 실험을 전사적 표준 체계로 통합", "AX 전담 조직(Task Force) 구성 및 자원 집중", "데이터 수집 및 관리 표준 가이드라인 수립"],
+                        steps: [
+                            { title: "역량 강화 및 표준화", period: "1~3개월", content: "부서별 AX 챔피언 심화 교육. 전사 공통 AI 활용 가이드라인 및 보안 수칙 수립." },
+                            { title: "다각적 PoC 수행", period: "3~6개월", content: "생산, 품질, 영업 등 주요 밸류체인별 3~4개 PoC 동시 추진. 데이터 정제 작업 병행." },
+                            { title: "성과 검증 및 인프라", period: "6~12개월", content: "PoC 성과 정량화 및 비즈니스 가치 검증. 전사 AI 플랫폼(SaaS 등) 도입 검토." }
+                        ],
+                        courses: [
+                            { category: "기초", content: "데이터 기반 의사결정의 기초와 AI 활용" },
+                            { category: "실무", content: "노코드(No-code) 도구를 활용한 업무 앱 구축" },
+                            { category: "고급", content: "데이터 거버넌스 및 AI 보안 관리 실무" }
+                        ],
+                        pocs: [
+                            { area: "생산/공정", task: "생산일보 자동 기록 및 단순 공정 모니터링" },
+                            { area: "품질/검사", task: "과거 불량 사례 검색 및 유사 사례 추천 시스템" }
+                        ]
+                    },
+                    L3: {
+                        directions: ["부서 간 데이터 사일로 해소 및 통합 데이터 레이크 구축", "AI 성과 관리 체계(KPI) 도입 및 비즈니스 가치 연결", "실무자 중심의 자율적 AI 혁신 문화 정착"],
+                        steps: [
+                            { title: "데이터 통합 및 고도화", period: "1~3개월", content: "전사 통합 데이터 플랫폼 구축 착수. 부서별 데이터 표준화 및 클렌징 가속화." },
+                            { title: "전사 확산 및 내재화", period: "3~6개월", content: "성공한 PoC의 전사 확대 적용. 부서별 AI 활용 성과 지표 관리 및 피드백." },
+                            { title: "지능형 프로세스 구축", period: "6~12개월", content: "주요 의사결정 프로세스에 AI 분석 결과 반영. AI 기반 예측 모델링 고도화." }
+                        ],
+                        courses: [
+                            { category: "기초", content: "AI 윤리와 책임 있는 AI 활용 (Responsible AI)" },
+                            { category: "실무", content: "파이썬 기반 데이터 분석 및 머신러닝 기초" },
+                            { category: "고급", content: "AI 비즈니스 모델 혁신 및 전략 기획" }
+                        ],
+                        pocs: [
+                            { area: "영업/마케팅", task: "고객 이탈 예측 및 맞춤형 프로모션 추천" },
+                            { area: "품질/R&D", task: "AI 기반 최적 배합비/공정 조건 도출" }
+                        ]
+                    },
+                    L4: {
+                        directions: ["실시간 데이터 기반의 지능형 자율 경영 체계 구축", "AI 모델의 지속적 학습 및 고도화(MLOps) 체계 마련", "AI 기반의 신규 비즈니스 모델 및 수익원 창출"],
+                        steps: [
+                            { title: "운영 최적화 및 안정화", period: "1~3개월", content: "전사 AI 운영 현황 모니터링 및 성능 최적화. MLOps 도입을 통한 모델 관리 자동화." },
+                            { title: "비즈니스 모델 혁신", period: "3~6개월", content: "AI 기반 신규 서비스/제품 기획 및 시장 검증. 고객 경험(CX) 혁신 프로젝트 추진." },
+                            { title: "글로벌 경쟁력 확보", period: "6~12개월", content: "글로벌 수준의 AI 거버넌스 확립. 외부 생태계(스타트업 등)와의 오픈 이노베이션 강화." }
+                        ],
+                        courses: [
+                            { category: "기초", content: "최신 AI 트렌드와 산업별 혁신 사례 세미나" },
+                            { category: "실무", content: "LLM(거대언어모델) 파인튜닝 및 사내 지식 베이스 구축" },
+                            { category: "고급", content: "AI 최고 책임자(CAIO) 역량 강화 과정" }
+                        ],
+                        pocs: [
+                            { area: "전략/기획", task: "실시간 시장 지표 기반 수요 예측 및 재고 최적화" },
+                            { area: "고객 서비스", task: "멀티모달 AI 기반 지능형 고객 상담 센터 구축" }
+                        ]
+                    },
+                    L5: {
+                        directions: ["AI First 문화의 완전한 정착 및 창의적 혁신 가속화", "글로벌 AI 생태계 리딩 및 기술 표준 주도", "지속 가능한 AI 성장을 위한 ESG 경영 연계"],
+                        steps: [
+                            { title: "초격차 기술 확보", period: "1~3개월", content: "차세대 AI 기술(Agentic AI 등) 선제적 도입 및 연구. 사내 AI 연구소 역량 강화." },
+                            { title: "생태계 확장", period: "3~6개월", content: "플랫폼 비즈 전환 및 외부 파트너십 확장. AI 기술 수출 및 글로벌 브랜딩." },
+                            { title: "미래 가치 창출", period: "6~12개월", content: "AI 기반의 완전한 비즈니스 트랜스포메이션 달성. 사회적 가치 창출을 위한 AI 프로젝트." }
+                        ],
+                        courses: [
+                            { category: "기초", content: "미래 사회와 AI의 역할 (인문학적 통찰)" },
+                            { category: "실무", content: "최첨단 AI 알고리즘 및 아키텍처 설계" },
+                            { category: "고급", content: "글로벌 AI 거버넌스 및 표준화 리더십" }
+                        ],
+                        pocs: [
+                            { area: "신사업", task: "AI 기반 자율 운영 공장(Lights-out Factory) 모델 구축" },
+                            { area: "R&D", task: "생성형 AI 기반 신소재/신제품 가상 설계 및 시뮬레이션" }
+                        ]
+                    }
+                };
+                return strategies[level];
+            };
+
+            const downloadWordReport = async () => {
+                if (!diagnosticResult) return;
+                const strategy = getExecutionStrategy(diagnosticResult.overallLevel);
+                
+                const docObj = new Document({
+                    sections: [{
+                        children: [
+                            new Paragraph({ text: "AX 진단 분석 보고서", heading: HeadingLevel.HEADING_1, alignment: AlignmentType.CENTER }),
+                            new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: `기업명: ${diagnosticResult.companyName}`, bold: true }), new TextRun({ text: "  |  " }), new TextRun({ text: `진단일: ${new Date().toLocaleDateString()}`, bold: true })] }),
+                            
+                            new Paragraph({ text: "01. AX 진단 대시보드 요약", heading: HeadingLevel.HEADING_2, spacing: { before: 400, after: 200 } }),
+                            new Table({
+                                width: { size: 100, type: WidthType.PERCENTAGE },
+                                rows: [
+                                    new TableRow({
+                                        children: [
+                                            new TableCell({
+                                                children: [
+                                                    new Paragraph({ children: [new TextRun({ text: "OVERALL STATUS", bold: true, size: 18, color: "64748b" })], alignment: AlignmentType.CENTER }),
+                                                    new Paragraph({ children: [new TextRun({ text: diagnosticResult.overallLevel, bold: true, size: 80, color: diagnosticResult.overallLevel === 'L5' ? "10b981" : "4f46e5" })], alignment: AlignmentType.CENTER }),
+                                                    new Paragraph({ children: [new TextRun({ text: diagnosticResult.overallLevelName, bold: true, size: 24 })], alignment: AlignmentType.CENTER }),
+                                                ],
+                                                shading: { fill: "f1f5f9" },
+                                            }),
+                                            new TableCell({
+                                                children: [
+                                                    new Paragraph({ children: [new TextRun({ text: "종합 진단 지표", bold: true, size: 18, color: "64748b" })], indent: { left: 200 } }),
+                                                    new Paragraph({ children: [new TextRun({ text: "• 종합 점수: ", bold: true }), new TextRun({ text: `${diagnosticResult.overallScore} / 5.0`, bold: true, color: "4f46e5" })], indent: { left: 400 } }),
+                                                    new Paragraph({ children: [new TextRun({ text: "• 경영진 의지: ", bold: true }), new TextRun({ text: `${formData.execScore}점 (${diagnosticResult.execLevel})` })], indent: { left: 400 } }),
+                                                    new Paragraph({ children: [new TextRun({ text: "• 부서 준비도: ", bold: true }), new TextRun({ text: `${(formData.deptScores.reduce((acc, curr) => acc + curr.score, 0) / formData.deptScores.length).toFixed(1)}점` })], indent: { left: 400 } }),
+                                                    new Paragraph({ children: [new TextRun({ text: "• 개인 역량: ", bold: true }), new TextRun({ text: `${formData.individualScore}점 (${diagnosticResult.individualLevel})` })], indent: { left: 400 } }),
+                                                ],
+                                            }),
+                                        ]
+                                    })
+                                ]
+                            }),
+
+                            new Paragraph({ text: "02. 종합 진단 결과", heading: HeadingLevel.HEADING_2, spacing: { before: 400 } }),
+                            new Paragraph({ text: getConsultingText(diagnosticResult.overallLevel, 'overall') }),
+
+                            new Paragraph({ text: "03. 영역별 상세 분석", heading: HeadingLevel.HEADING_2, spacing: { before: 400 } }),
+                            new Paragraph({ children: [new TextRun({ text: "■ 경영진 의지", bold: true })] }),
+                            new Paragraph({ text: getConsultingText(diagnosticResult.execLevel, 'exec') }),
+                            new Paragraph({ children: [new TextRun({ text: "■ 부서별 준비도", bold: true })] }),
+                            new Paragraph({ text: getConsultingText(diagnosticResult.overallLevel, 'dept') }),
+                            new Paragraph({ children: [new TextRun({ text: "■ 개인 역량", bold: true })] }),
+                            new Paragraph({ text: getConsultingText(diagnosticResult.individualLevel, 'indiv') }),
+
+                            new Paragraph({ text: "04. 맞춤형 실행 전략", heading: HeadingLevel.HEADING_2, spacing: { before: 400 } }),
+                            ...strategy.directions.map((dir, i) => new Paragraph({ text: `${i+1}. ${dir}`, bullet: { level: 0 } })),
+                            new Paragraph({ children: [new TextRun({ text: "■ 단계별 로드맵", bold: true }), new TextRun({ text: " (상세 내용은 앱에서 확인 가능)" })] }),
+                            ...strategy.steps.map(s => new Paragraph({ text: `[${s.period}] ${s.title}: ${s.content}` })),
+                        ]
+                    }]
+                });
+
+                const blob = await Packer.toBlob(docObj);
+                saveAs(blob, `AX_Diagnostic_Report_${diagnosticResult.companyName}.docx`);
+            };
+
+            const resetForm = () => {
+                setStep('input');
+                setViewMode('dashboard');
+            };
+
+            return (
+                <div className="min-h-screen bg-slate-50 p-4 md:p-8">
+                    <div className="max-w-5xl mx-auto">
+                        <header className="mb-8 flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2 bg-indigo-600 rounded-xl text-white">
+                                    <Icon name="activity" size={24} />
+                                </div>
+                                <div>
+                                    <h1 className="text-2xl font-bold text-slate-900 tracking-tight">AX Diagnostic Analyzer</h1>
+                                    <p className="text-slate-500 text-sm">기업 AI 전환 수준 진단 전문가 시스템</p>
+                                </div>
+                            </div>
+                            {step === 'result' && (
+                                <div className="flex items-center gap-4">
+                                    <div className="flex bg-slate-200 p-1 rounded-lg">
+                                        {['dashboard', 'report', 'strategy'].map(mode => (
+                                            <button 
+                                                key={mode}
+                                                onClick={() => setViewMode(mode)}
+                                                className={cn(
+                                                    "px-4 py-1.5 text-sm font-medium rounded-md transition-all",
+                                                    viewMode === mode ? "bg-white text-indigo-600 shadow-sm" : "text-slate-600 hover:text-slate-900"
+                                                )}
+                                            >
+                                                {mode === 'dashboard' ? '대시보드' : mode === 'report' ? '보고서' : '실행 전략'}
+                                            </button>
+                                        ))}
+                                    </div>
+                                    <button onClick={resetForm} className="flex items-center gap-2 text-sm font-medium text-indigo-600 hover:text-indigo-700">
+                                        <Icon name="refresh-ccw" size={16} />
+                                        다시 진단하기
+                                    </button>
+                                </div>
+                            )}
+                        </header>
+
+                        <AnimatePresence mode="wait">
+                            {step === 'input' ? (
+                                <motion.div key="input" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                                    <div className="lg:col-span-2 space-y-8">
+                                        <section className="glass-card p-8">
+                                            <h2 className="text-xl font-bold text-slate-900 mb-6 flex items-center gap-2">
+                                                <Icon name="building-2" className="text-indigo-600" />
+                                                기업 기본 정보
+                                            </h2>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                                <div className="space-y-2">
+                                                    <label className="text-sm font-semibold text-slate-700">기업명</label>
+                                                    <input type="text" value={formData.companyName} onChange={(e) => setFormData({ ...formData, companyName: e.target.value })} placeholder="예: (주)에이아이테크" className="w-full px-4 py-3 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500" />
+                                                </div>
+                                                <div className="space-y-2">
+                                                    <label className="text-sm font-semibold text-slate-700">업종</label>
+                                                    <input type="text" value={formData.industry} onChange={(e) => setFormData({ ...formData, industry: e.target.value })} placeholder="예: 제조업 (자동차 부품)" className="w-full px-4 py-3 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-indigo-500" />
+                                                </div>
+                                                <div className="space-y-2 md:col-span-2">
+                                                    <label className="text-sm font-semibold text-slate-700">종업원 수</label>
+                                                    <select value={formData.employeeCount} onChange={(e) => setFormData({ ...formData, employeeCount: e.target.value })} className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white outline-none focus:ring-2 focus:ring-indigo-500">
+                                                        <option value="">선택하세요</option>
+                                                        <option value="50인 미만">50인 미만</option>
+                                                        <option value="50~100인">50~100인</option>
+                                                        <option value="100~300인">100~300인</option>
+                                                        <option value="300인 이상">300인 이상</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+                                        </section>
+
+                                        <section className="glass-card p-8">
+                                            <h2 className="text-xl font-bold text-slate-900 mb-8 flex items-center gap-2">
+                                                <Icon name="activity" className="text-indigo-600" />
+                                                영역별 AX 준비도 (1~5점)
+                                            </h2>
+                                            <div className="space-y-10">
+                                                <div className="space-y-4">
+                                                    <div className="flex justify-between items-center">
+                                                        <label className="font-bold text-slate-800 flex items-center gap-2"><Icon name="award" size={18} className="text-amber-500" />경영진 추진 의지</label>
+                                                        <span className="text-indigo-600 font-black text-xl">{formData.execScore}</span>
+                                                    </div>
+                                                    <input type="range" min="1" max="5" step="0.5" value={formData.execScore} onChange={(e) => setFormData({ ...formData, execScore: parseFloat(e.target.value) })} className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600" />
+                                                </div>
+                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                                    {formData.deptScores.map((dept, idx) => (
+                                                        <div key={dept.name} className="space-y-4">
+                                                            <div className="flex justify-between items-center">
+                                                                <label className="font-bold text-slate-800">{dept.name} 부서 준비도</label>
+                                                                <span className="text-indigo-600 font-black text-lg">{dept.score}</span>
+                                                            </div>
+                                                            <input type="range" min="1" max="5" step="0.5" value={dept.score} onChange={(e) => handleDeptScoreChange(idx, parseFloat(e.target.value))} className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600" />
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                                <div className="space-y-4 pt-4 border-t border-slate-100">
+                                                    <div className="flex justify-between items-center">
+                                                        <label className="font-bold text-slate-800 flex items-center gap-2"><Icon name="users" size={18} className="text-emerald-500" />개인별 AX 역량 (평균)</label>
+                                                        <span className="text-indigo-600 font-black text-xl">{formData.individualScore}</span>
+                                                    </div>
+                                                    <input type="range" min="1" max="5" step="0.5" value={formData.individualScore} onChange={(e) => setFormData({ ...formData, individualScore: parseFloat(e.target.value) })} className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600" />
+                                                </div>
+                                            </div>
+                                            <div className="mt-12">
+                                                <button onClick={() => setStep('result')} disabled={!formData.companyName || !formData.industry} className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-bold rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2 group">
+                                                    진단 분석 결과 보기
+                                                    <Icon name="chevron-right" size={20} className="group-hover:translate-x-1 transition-transform" />
+                                                </button>
+                                            </div>
+                                        </section>
+                                    </div>
+                                    <div className="lg:col-span-1">
+                                        <div className="sticky top-8 space-y-6">
+                                            <div className="glass-card p-6 bg-indigo-600 text-white border-none">
+                                                <h3 className="font-bold text-lg mb-4 flex items-center gap-2"><Icon name="info" size={20} />진단 가이드</h3>
+                                                <ul className="space-y-4 text-sm opacity-90">
+                                                    <li className="flex gap-3"><span className="flex-shrink-0 w-5 h-5 rounded-full bg-white/20 flex items-center justify-center text-[10px] font-bold">01</span>최근 6개월간의 조직 내 AI 활용 현황을 기준으로 점수를 산정하세요.</li>
+                                                    <li className="flex gap-3"><span className="flex-shrink-0 w-5 h-5 rounded-full bg-white/20 flex items-center justify-center text-[10px] font-bold">02</span>부서별 점수는 실제 업무 프로세스에 AI가 얼마나 통합되었는지를 나타냅니다.</li>
+                                                </ul>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </motion.div>
+                            ) : (
+                                <motion.div key="result" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="space-y-8">
+                                    {viewMode === 'dashboard' ? (
+                                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                                            <div className="lg:col-span-1 space-y-8">
+                                                <section className="glass-card p-8 text-center">
+                                                    <h3 className="text-slate-500 font-bold text-sm mb-2 uppercase tracking-wider">{diagnosticResult.companyName} 진단 결과</h3>
+                                                    <div className="relative inline-block mb-4">
+                                                        <div className={cn("w-32 h-32 rounded-full flex flex-col items-center justify-center text-white shadow-xl ring-8 ring-white", LEVEL_MAP[diagnosticResult.overallLevel].color)}>
+                                                            <span className="text-4xl font-black">{diagnosticResult.overallLevel}</span>
+                                                            <span className="text-[10px] font-bold opacity-80">OVERALL LEVEL</span>
+                                                        </div>
+                                                    </div>
+                                                    <h2 className="text-2xl font-black text-slate-900 mb-1">{diagnosticResult.overallLevelName}</h2>
+                                                    <p className="text-indigo-600 font-bold text-lg">종합 점수: {diagnosticResult.overallScore} / 5.0</p>
+                                                </section>
+                                                <section className="glass-card p-6">
+                                                    <h3 className="font-bold text-slate-900 mb-6 flex items-center gap-2"><Icon name="layout-dashboard" size={18} className="text-indigo-600" />영역별 역량 지표</h3>
+                                                    <div className="h-64 w-full">
+                                                        <ResponsiveContainer width="100%" height="100%">
+                                                            <RadarChart cx="50%" cy="50%" outerRadius="80%" data={diagnosticResult.chartData}>
+                                                                <PolarGrid stroke="#e2e8f0" />
+                                                                <PolarAngleAxis dataKey="name" tick={{ fill: '#64748b', fontSize: 12, fontWeight: 600 }} />
+                                                                <Radar name="Score" dataKey="score" stroke="#4f46e5" fill="#4f46e5" fillOpacity={0.2} />
+                                                            </RadarChart>
+                                                        </ResponsiveContainer>
+                                                    </div>
+                                                </section>
+                                            </div>
+                                            <div className="lg:col-span-2 space-y-6">
+                                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                                    <div className="glass-card p-5 border-l-4 border-amber-500">
+                                                        <span className="text-[10px] font-bold text-slate-400 uppercase">경영진 의지</span>
+                                                        <div className="flex items-end justify-between mt-1">
+                                                            <h4 className="text-xl font-black text-slate-900">{formData.execScore}점</h4>
+                                                            <LevelBadge level={diagnosticResult.execLevel} />
+                                                        </div>
+                                                    </div>
+                                                    <div className="glass-card p-5 border-l-4 border-indigo-500">
+                                                        <span className="text-[10px] font-bold text-slate-400 uppercase">부서 평균</span>
+                                                        <div className="flex items-end justify-between mt-1">
+                                                            <h4 className="text-xl font-black text-slate-900">{(formData.deptScores.reduce((a, b) => a + b.score, 0) / formData.deptScores.length).toFixed(1)}점</h4>
+                                                            <LevelBadge level={getLevel(formData.deptScores.reduce((a, b) => a + b.score, 0) / formData.deptScores.length)} />
+                                                        </div>
+                                                    </div>
+                                                    <div className="glass-card p-5 border-l-4 border-emerald-500">
+                                                        <span className="text-[10px] font-bold text-slate-400 uppercase">개인 역량</span>
+                                                        <div className="flex items-end justify-between mt-1">
+                                                            <h4 className="text-xl font-black text-slate-900">{formData.individualScore}점</h4>
+                                                            <LevelBadge level={diagnosticResult.individualLevel} />
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <section className="glass-card p-8 bg-indigo-50/50 border-indigo-100">
+                                                    <h3 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2"><Icon name="info" size={20} className="text-indigo-600" />종합 진단 의견</h3>
+                                                    <p className="text-slate-700 leading-relaxed font-medium">{getConsultingText(diagnosticResult.overallLevel, 'overall')}</p>
+                                                </section>
+                                            </div>
+                                        </div>
+                                    ) : viewMode === 'report' ? (
+                                        <div className="max-w-4xl mx-auto glass-card p-10 bg-white shadow-xl border-slate-100">
+                                            <div className="flex justify-between items-start border-b border-slate-100 pb-10 mb-10">
+                                                <div className="text-left">
+                                                    <h2 className="text-3xl font-black text-slate-900 mb-4">AX 진단 분석 보고서</h2>
+                                                    <div className="flex items-center gap-6 text-slate-500 font-bold">
+                                                        <span>기업명: {diagnosticResult.companyName}</span>
+                                                        <span>진단일: {new Date().toLocaleDateString()}</span>
+                                                    </div>
+                                                </div>
+                                                <button onClick={downloadWordReport} className="flex items-center gap-2 px-6 py-3 bg-slate-900 text-white font-bold rounded-xl hover:bg-slate-800 transition-all shadow-lg">
+                                                    <Icon name="download" size={18} />
+                                                    Word 보고서 다운로드
+                                                </button>
+                                            </div>
+                                            <section className="space-y-6 mb-10">
+                                                <h3 className="text-xl font-bold text-slate-900 flex items-center gap-3"><span className="w-8 h-8 rounded-lg bg-slate-900 text-white flex items-center justify-center text-sm">01</span>종합 진단 결과</h3>
+                                                <div className="p-8 bg-slate-50 rounded-2xl border border-slate-100">
+                                                    <div className="flex items-center gap-4 mb-6">
+                                                        <LevelBadge level={diagnosticResult.overallLevel} />
+                                                        <span className="text-2xl font-black text-slate-900">{diagnosticResult.overallLevelName}</span>
+                                                    </div>
+                                                    <p className="text-slate-700 leading-relaxed text-lg">{getConsultingText(diagnosticResult.overallLevel, 'overall')}</p>
+                                                </div>
+                                            </section>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-8">
+                                            <section className="glass-card p-8">
+                                                <h3 className="text-xl font-bold text-slate-900 mb-6 flex items-center gap-3">
+                                                    <Icon name="trending-up" className="text-indigo-600" />
+                                                    {diagnosticResult.overallLevelName}를 위한 실행 전략
+                                                </h3>
+                                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                                    {getExecutionStrategy(diagnosticResult.overallLevel).steps.map((step, i) => (
+                                                        <div key={i} className="p-6 bg-white rounded-2xl border border-slate-100 shadow-sm">
+                                                            <span className="text-indigo-600 font-bold text-xs uppercase tracking-wider">{step.period}</span>
+                                                            <h4 className="font-bold text-slate-900 mt-1 mb-3">{step.title}</h4>
+                                                            <p className="text-sm text-slate-600 leading-relaxed">{step.content}</p>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </section>
+                                        </div>
+                                    )}
+                                </motion.div>
+                            )}
+                        </AnimatePresence>
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
